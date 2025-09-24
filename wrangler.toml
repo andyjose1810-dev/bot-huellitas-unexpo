@@ -1,0 +1,10 @@
+name = "bot-huellitas-unexpo"
+main = "bot_huellitas_unexpo1.py"
+compatibility_date = "2024-05-18"
+
+[vars]
+TELEGRAM_TOKEN = "8162172311:AAGLQSKKrNwLDKVvo0Jsu9a3jWkkwPwleJ8"
+GRUPO_CHAT_ID = "-1002960136526"
+
+[build]
+command = "pip install -r requirements.txt"
