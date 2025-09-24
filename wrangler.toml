@@ -1,6 +1,7 @@
 name = "bot-huellitas-unexpo"
 main = "bot_huellitas_unexpo1.py"
 compatibility_date = "2024-05-18"
+compatibility_flags = ["python_workers"]
 
 [vars]
 TELEGRAM_TOKEN = "8162172311:AAGLQSKKrNwLDKVvo0Jsu9a3jWkkwPwleJ8"
