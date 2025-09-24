@@ -10,11 +10,15 @@ from telegram.ext import (
     filters,
     ConversationHandler,
 )
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+from urllib.parse import parse_qs, urlparse
 
 # --- Configuraciones del bot (ahora se leen de variables de entorno) ---
-# Asegúrate de configurar estas variables en la consola de AWS Lambda
+# Asegúrate de configurar estas variables en la consola de AWS Lambda o Replit Secrets
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GRUPO_CHAT_ID = int(os.environ.get("GRUPO_CHAT_ID"))
+GRUPO_CHAT_ID_STR = os.environ.get("GRUPO_CHAT_ID")
+GRUPO_CHAT_ID = int(GRUPO_CHAT_ID_STR) if GRUPO_CHAT_ID_STR else None
 
 # Define los estados de la conversación
 (
@@ -214,53 +218,54 @@ async def adoptar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         disable_web_page_preview=True
     )
+# --- Esta es la NUEVA sección para Cloudflare Workers ---
+# Es el punto de entrada que Cloudflare espera.
+class MyRequestHandler(BaseHTTPRequestHandler):
+    async def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        body = json.loads(post_data)
 
-# --- NUEVA FUNCIÓN: lambda_handler para AWS Lambda ---
-# Esta función es el "punto de entrada" de tu bot en un entorno serverless.
-async def lambda_handler(event, context):
-    """
-    Función de entrada para AWS Lambda. Procesa la actualización de Telegram
-    enviada a través de un webhook.
-    """
-    if not TOKEN or not GRUPO_CHAT_ID:
-        logging.error("Las variables de entorno no están configuradas.")
-        return {"statusCode": 500, "body": "Internal Server Error"}
-
-    # Crea la aplicación del bot
-    application = Application.builder().token(TOKEN).build()
+        # Crea la aplicación del bot
+        application = Application.builder().token(TOKEN).build()
     
-    # Define los manejadores como antes
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("reportar", iniciar_reporte)],
-        states={
-            PEDIR_TIPO_ANIMAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_tipo_animal)],
-            PEDIR_UBICACION: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_ubicacion)],
-            PEDIR_ESTADO_SALUD: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_estado_salud)],
-            PEDIR_NOMBRE_CONTACTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_nombre_contacto)],
-            PEDIR_NUMERO_CONTACTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_numero_contacto)],
-            PEDIR_DESCRIPCION: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_descripcion)],
-            PEDIR_FOTO: [MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, recibir_foto)],
-            CONFIRMAR_REPORTE: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_reporte)],
-        },
-        fallbacks=[CommandHandler("cancelar", cancelar)],
-    )
+        # Define los manejadores como antes
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("reportar", iniciar_reporte)],
+            states={
+                PEDIR_TIPO_ANIMAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_tipo_animal)],
+                PEDIR_UBICACION: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_ubicacion)],
+                PEDIR_ESTADO_SALUD: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_estado_salud)],
+                PEDIR_NOMBRE_CONTACTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_nombre_contacto)],
+                PEDIR_NUMERO_CONTACTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_numero_contacto)],
+                PEDIR_DESCRIPCION: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_descripcion)],
+                PEDIR_FOTO: [MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, recibir_foto)],
+                CONFIRMAR_REPORTE: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_reporte)],
+            },
+            fallbacks=[CommandHandler("cancelar", cancelar)],
+        )
 
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("start", say_hello))
-    application.add_handler(CommandHandler("donacion", donacion))
-    application.add_handler(CommandHandler("adoptar", adoptar))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, say_hello))
-
-    try:
-        # El cuerpo del evento contiene la actualización de Telegram
-        body = json.loads(event["body"])
-        update = Update.de_json(body, application.bot)
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler("start", say_hello))
+        application.add_handler(CommandHandler("donacion", donacion))
+        application.add_handler(CommandHandler("adoptar", adoptar))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, say_hello))
         
-        # Procesa la actualización
+        update = Update.de_json(body, application.bot)
         await application.process_update(update)
 
-        return {"statusCode": 200, "body": json.dumps("OK")}
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(json.dumps("OK").encode())
 
+async def serve():
+    server = HTTPServer(('0.0.0.0', 8000), MyRequestHandler)
+    await server.serve_forever()
+
+# Punto de entrada para Cloudflare
+async def fetch(request):
+    try:
+        from pyodide import serve
+        return await serve.serve(request, MyRequestHandler)
     except Exception as e:
-        logging.error(f"Error al procesar el webhook: {e}")
-        return {"statusCode": 500, "body": json.dumps(f"Error: {e}")}
+        return Response(f"Error: {e}", status=500)
